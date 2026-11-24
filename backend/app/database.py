@@ -224,6 +224,26 @@ DDL_STATEMENTS = [
         FOREIGN KEY (task_id) REFERENCES forecast_tasks(id)
     )""",
 
+    """CREATE TABLE IF NOT EXISTS forecast_sample_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        run_no INTEGER NOT NULL DEFAULT 1,
+        metric_id INTEGER,
+        status TEXT NOT NULL DEFAULT '执行中',
+        method TEXT DEFAULT '',
+        source TEXT NOT NULL DEFAULT '窗口取样',
+        sample_ids TEXT NOT NULL DEFAULT '[]',
+        sample_values TEXT NOT NULL DEFAULT '[]',
+        sample_times TEXT NOT NULL DEFAULT '[]',
+        calculation_order TEXT NOT NULL DEFAULT '[]',
+        results_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT,
+        FOREIGN KEY (task_id) REFERENCES forecast_tasks(id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_fsr_task ON forecast_sample_runs(task_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_fsr_status ON forecast_sample_runs(task_id, status)",
+
     # ==================== Comparison & Report Tier ====================
     """CREATE TABLE IF NOT EXISTS cohort_comparisons (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

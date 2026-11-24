@@ -30,6 +30,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.database import db
+from app.sampling import (
+    FORECAST_MIN_SAMPLES,
+    fetch_snapshot_sample_by_ids,
+    forecast_window_size,
+    sample_metric_snapshots,
+)
 
 
 # ============================================================================
@@ -669,11 +675,20 @@ def detect_anomaly(analysis: dict[str, Any]) -> dict[str, Any]:
 # 预测管道
 # ============================================================================
 
-def compute_forecast(task: dict[str, Any]) -> list[dict[str, Any]]:
+def compute_forecast(
+    task: dict[str, Any],
+    *,
+    sample_ids: list[int] | None = None,
+) -> list[dict[str, Any]]:
     """基于历史指标值执行时间序列预测。
 
     使用简单指数平滑（SES）或移动平均法，根据 method 选择：
     返回未来 N 天的预测值、上下界和置信区间。
+
+    取样统一走 ``app.sampling``：预测行窗口为五（不超过任务的历史基线天数），
+    同一采样时间用快照编号打破并列，再反转成计算方向（最旧在前）。
+    传入 ``sample_ids`` 时只按这组编号取数，绝不把新到的同时间戳快照
+    拼进旧序列；编号缺失导致样本不足时按既有规则返回空列表。
     """
     task_id = task["id"]
     target_metric = task.get("预测指标", task.get("target_metric", ""))
@@ -685,19 +700,19 @@ def compute_forecast(task: dict[str, Any]) -> list[dict[str, Any]]:
     if not metric:
         return []
 
-    # 清除旧结果
+    # 清除旧结果（保持既有行为；可复查的样本凭据保存在 forecast_sample_runs）
     db.delete("forecast_results", "task_id=?", [task_id])
 
-    snapshots = db.fetchall(
-        "SELECT snapshot_value, snapshot_time FROM metric_values WHERE metric_id=? "
-        "ORDER BY snapshot_time DESC LIMIT ?",
-        [metric["id"], baseline_days],
-    )
+    if sample_ids is None:
+        snapshots = sample_metric_snapshots(
+            metric["id"], forecast_window_size(baseline_days))
+    else:
+        snapshots = fetch_snapshot_sample_by_ids(metric["id"], sample_ids)
 
-    if len(snapshots) < 5:
+    if len(snapshots) < FORECAST_MIN_SAMPLES:
         return []
 
-    values = [s["snapshot_value"] for s in reversed(snapshots)]
+    values = [s["snapshot_value"] for s in snapshots]
     results: list[dict[str, Any]] = []
 
     now = datetime.now(timezone.utc)

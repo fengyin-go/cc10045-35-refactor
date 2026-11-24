@@ -11,6 +11,7 @@ from typing import Any
 
 from app.database import db
 from app.pipeline import compute_metric_snapshot
+from app.sampling import TREND_LIMIT, fetch_metric_snapshot_window
 from app.services.base import BaseModuleService
 
 
@@ -57,16 +58,17 @@ class MetricStoreService(BaseModuleService):
             })
         return {"processed": len(metrics), "results": results}
 
-    def metric_trend(self, metric_id: int, limit: int = 30) -> dict[str, Any]:
-        """获取指标的历史趋势数据。"""
+    def metric_trend(self, metric_id: int, limit: int = TREND_LIMIT) -> dict[str, Any]:
+        """获取指标的历史趋势数据。
+
+        窗口读取走 ``app.sampling``：行数上限不变，展示方向仍是最近在前，
+        同一采样时间的快照按编号倒序确定取舍。
+        """
         metric = db.fetchone("SELECT * FROM metrics WHERE id=?", [metric_id])
         if metric is None:
             return {"trend": "no_data", "points": []}
 
-        rows = db.fetchall(
-            "SELECT * FROM metric_values WHERE metric_id=? ORDER BY snapshot_time DESC LIMIT ?",
-            [metric_id, limit],
-        )
+        rows = fetch_metric_snapshot_window(metric_id, limit)
         values = [r["snapshot_value"] for r in rows]
         if not values:
             return {"trend": "no_data", "points": [], "metric_name": metric["metric_name"]}

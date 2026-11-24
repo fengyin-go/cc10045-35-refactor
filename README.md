@@ -78,6 +78,12 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+- 指标快照的窗口读取集中在 `backend/app/sampling.py`：趋势与预测按同一总序
+  （`snapshot_time DESC, id DESC`）取样，同一时间戳用快照编号确定取舍。
+  预测行窗口为五，不足五行时按既有规则返回空结果。
+- 每轮预测的取样凭据落在 `forecast_sample_runs`，可用
+  `/api/pipeline/forecast_model/{task_id}/runs/{run_id}` 复查样本编号与计算顺序；
+  中断后续做支持 `reuse`（沿用首次样本）与 `refresh`（重新取满一组），不拼接序列。
 
 领域：数据工程
 子方向：数据分析与数据应用

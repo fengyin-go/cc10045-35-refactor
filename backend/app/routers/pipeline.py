@@ -1,7 +1,7 @@
 """数据分析管道路由：事件采集、聚合执行、指标快照、分群计算等核心操作入口。"""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.database import db
 from app.pipeline import (
@@ -81,10 +81,130 @@ def api_compute_retention(task_id: int) -> dict:
 
 
 @router.post("/forecast/{task_id}/compute")
-def api_compute_forecast(task_id: int) -> dict:
-    """对指定预测任务执行计算。"""
+def api_compute_forecast(
+    task_id: int,
+    mode: str | None = Query(default=None, pattern="^(reuse|refresh)$"),
+) -> dict:
+    """对指定预测任务执行计算；带 mode 时续做被中断的那一轮。"""
     svc = service_for("forecast_model")
-    return svc.run_forecast(task_id)
+    return svc.run_forecast(task_id, mode)
+
+
+@router.post("/forecast/{task_id}/prepare")
+def api_prepare_forecast(task_id: int) -> dict:
+    """完成预测的首次取数后中断，样本凭据落库但不产出结果。"""
+    svc = service_for("forecast_model")
+    return svc.prepare_forecast(task_id)
+
+
+@router.post("/forecast/{task_id}/resume")
+def api_resume_forecast(
+    task_id: int,
+    mode: str = Query(default="reuse", pattern="^(reuse|refresh)$"),
+    run_id: int | None = Query(default=None, ge=1),
+) -> dict:
+    """续做被中断的预测：reuse 沿用首次样本，refresh 重新取满一组。"""
+    svc = service_for("forecast_model")
+    return svc.resume_forecast(task_id, mode, run_id)
+
+
+@router.get("/forecast/{task_id}/runs")
+def api_forecast_runs(task_id: int) -> dict:
+    """列出预测任务每轮的取样凭据。"""
+    svc = service_for("forecast_model")
+    return {"ok": True, "items": svc.forecast_runs(task_id)}
+
+
+@router.get("/forecast/{task_id}/runs/{run_id}")
+def api_forecast_run_detail(task_id: int, run_id: int) -> dict:
+    """复查某一轮预测实际使用的样本编号与计算顺序。"""
+    svc = service_for("forecast_model")
+    record = svc.review_run(task_id, run_id)
+    if record is None:
+        return {"ok": False, "message": f"预测任务 {task_id} 下没有取样凭据 {run_id}"}
+    return {"ok": True, "run": record}
+
+
+@router.get("/forecast/{task_id}/results")
+def api_forecast_results(task_id: int) -> dict:
+    """复查预测结果，并附上最新一轮的取样凭据。"""
+    svc = service_for("forecast_model")
+    return {"ok": True, **svc.review_results(task_id)}
+
+
+@router.get("/forecast_model/{task_id}/forecasts")
+def api_forecast_model_results(task_id: int) -> dict:
+    """预测模型的结果入口，附带最新一轮取样凭据。"""
+    return api_forecast_results(task_id)
+
+
+@router.get("/forecast_model/{task_id}/run")
+def api_forecast_model_latest_run(task_id: int) -> dict:
+    """预测模型最新一轮的取样凭据。"""
+    svc = service_for("forecast_model")
+    return {"ok": True, "run": svc.latest_run(task_id)}
+
+
+@router.get("/metrics/{metric_id}/trend")
+def api_metric_trend(metric_id: int, limit: int | None = Query(default=None, ge=1)) -> dict:
+    """获取指标趋势；不传 limit 时沿用既有默认行数上限。"""
+    svc = service_for("metric_store")
+    if limit is None:
+        return svc.metric_trend(metric_id)
+    return svc.metric_trend(metric_id, limit)
+
+
+# ============================================================================
+# 模块形态的补充入口：沿用既有模块 key 即可打开趋势或复查预测样本
+# ============================================================================
+
+@router.get("/metric_store/{metric_id}/trend")
+def api_metric_store_trend(metric_id: int, limit: int | None = Query(default=None, ge=1)) -> dict:
+    """指标存储的趋势入口。"""
+    return api_metric_trend(metric_id, limit)
+
+
+@router.post("/metric_store/{metric_id}/snapshot")
+def api_metric_store_snapshot(metric_id: int) -> dict:
+    """指标存储的快照计算入口，语义同 /metrics/{metric_id}/snapshot。"""
+    return api_compute_snapshot(metric_id)
+
+
+@router.get("/forecast_model/{task_id}/runs")
+def api_forecast_model_runs(task_id: int) -> dict:
+    """预测模型的取样凭据列表。"""
+    return api_forecast_runs(task_id)
+
+
+@router.get("/forecast_model/{task_id}/runs/{run_id}")
+def api_forecast_model_run_detail(task_id: int, run_id: int) -> dict:
+    """按轮次复查预测样本编号与计算顺序。"""
+    return api_forecast_run_detail(task_id, run_id)
+
+
+@router.post("/forecast_model/{task_id}/compute")
+def api_forecast_model_compute(
+    task_id: int,
+    mode: str | None = Query(default=None, pattern="^(reuse|refresh)$"),
+) -> dict:
+    """预测模型的执行入口，语义同 /forecast/{task_id}/compute。"""
+    return api_compute_forecast(task_id, mode)
+
+
+@router.post("/forecast_model/{task_id}/prepare")
+def api_forecast_model_prepare(task_id: int) -> dict:
+    """预测模型的首次取数（取足样本后中断）入口。"""
+    return api_prepare_forecast(task_id)
+
+
+@router.post("/forecast_model/{task_id}/resume")
+def api_forecast_model_resume(
+    task_id: int,
+    mode: str = Query(default="reuse", pattern="^(reuse|refresh)$"),
+    run_id: int | None = Query(default=None, ge=1),
+) -> dict:
+    """预测模型的断点续做入口。"""
+    return api_resume_forecast(task_id, mode, run_id)
 
 
 @router.post("/comparison/{comparison_id}/compute")
